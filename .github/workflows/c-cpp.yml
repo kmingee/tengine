@@ -1,23 +1,70 @@
-name: C/C++ CI
+name: Build and Release Nginx
 
 on:
   push:
-    branches: [ "master" ]
+    branches:
+      - main
   pull_request:
-    branches: [ "master" ]
+    branches:
+      - main
 
 jobs:
-  build:
-
+  build-nginx:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
-    - name: configure
-      run: ./configure
-    - name: make
-      run: make
-    - name: make check
-      run: make check
-    - name: make distcheck
-      run: make distcheck
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libpcre3 libpcre3-dev zlib1g zlib1g-dev libssl-dev
+
+      - name: Configure and Build Nginx
+        run: |
+          ./configure --prefix=$GITHUB_WORKSPACE/nginx --with-http_ssl_module
+          make
+          make install
+
+      - name: Archive Nginx Build
+        run: |
+          tar -czvf nginx-build.tar.gz -C $GITHUB_WORKSPACE/nginx .
+
+      - name: Upload Nginx Build Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: nginx-build
+          path: nginx-build.tar.gz
+
+  release:
+    needs: build-nginx
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Download Build Artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: nginx-build
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          release_name: Nginx Build ${{ github.run_number }}
+          draft: false
+          prerelease: false
+
+      - name: Upload Release Asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: nginx-build.tar.gz
+          asset_name: nginx-build.tar.gz
+          asset_content_type: application/gzip
